@@ -1,30 +1,36 @@
+import random
+import string
 from django.db import transaction
-from rest_framework.views import APIView
+from django.contrib.auth import authenticate, get_user_model
+from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.contrib.auth.models import User
-from django.contrib.auth import authenticate
 from rest_framework.authtoken.models import Token
-from rest_framework.generics import CreateAPIView
 
 from .serializers import (
     RegisterValidateSerializer,
     AuthValidateSerializer,
     ConfirmationSerializer
 )
-from .models import ConfirmationCode, CustomUser
-import random
-import string
+from .models import ConfirmationCode
+
+# Look up the custom user model dynamically
+User = get_user_model()
 
 
-class AuthorizationAPIView(CreateAPIView):
+class AuthorizationAPIView(GenericAPIView):
     serializer_class = AuthValidateSerializer
 
     def post(self, request):
-        serializer = AuthValidateSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = authenticate(**serializer.validated_data)
+        # Django's authenticate() specifically looks for the 'username' keyword argument,
+        # even when your USERNAME_FIELD is rewritten to use email.
+        user = authenticate(
+            username=serializer.validated_data.get('email'),
+            password=serializer.validated_data.get('password')
+        )
 
         if user:
             if not user.is_active:
@@ -42,31 +48,25 @@ class AuthorizationAPIView(CreateAPIView):
         )
 
 
-class RegistrationAPIView(CreateAPIView):
+class RegistrationAPIView(GenericAPIView):
     serializer_class = RegisterValidateSerializer
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        email = serializer.validated_data['email']
-        password = serializer.validated_data['password']
-
         # Use transaction to ensure data consistency
         with transaction.atomic():
-            user = CustomUser.objects.create_user(
-                email=email,
-                password=password,
+            # Unpack validated_data so phone_number, email, 
+            # and password are all passed and saved automatically!
+            user = User.objects.create_user(
+                **serializer.validated_data,
                 is_active=False
             )
 
-            # Create a random 6-digit code
+            # Create a random 6-digit verification code
             code = ''.join(random.choices(string.digits, k=6))
-
-            confirmation_code = ConfirmationCode.objects.create(
-                user=user,
-                code=code
-            )
+            ConfirmationCode.objects.create(user=user, code=code)
 
         return Response(
             status=status.HTTP_201_CREATED,
@@ -77,22 +77,24 @@ class RegistrationAPIView(CreateAPIView):
         )
 
 
-class ConfirmUserAPIView(CreateAPIView):
+class ConfirmUserAPIView(GenericAPIView):
     serializer_class = ConfirmationSerializer
 
     def post(self, request):
-        serializer = ConfirmationSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         user_id = serializer.validated_data['user_id']
 
         with transaction.atomic():
-            user = CustomUser.objects.get(id=user_id)
+            # Fetch user safely using the dynamic User reference
+            user = User.objects.get(id=user_id)
             user.is_active = True
             user.save()
 
             token, _ = Token.objects.get_or_create(user=user)
-
+            
+            # Clear out the used confirmation token
             ConfirmationCode.objects.filter(user=user).delete()
 
         return Response(

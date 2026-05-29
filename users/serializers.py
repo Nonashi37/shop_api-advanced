@@ -1,25 +1,37 @@
 from rest_framework import serializers
-from django.contrib.auth.models import User
 from rest_framework.exceptions import ValidationError
-from .models import ConfirmationCode, CustomUser
+from django.contrib.auth import get_user_model
+from .models import ConfirmationCode
+
+
+# This prevents circular import hell in Django.
+User = get_user_model()
 
 
 class UserBaseSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    password = serializers.CharField()
+    # write_only hides it from responses; style tells Swagger to render a password mask input
+    password = serializers.CharField(
+        write_only=True, 
+        style={'input_type': 'password'}
+    )
 
 
 class AuthValidateSerializer(UserBaseSerializer):
+    """ Handles Login payload validation """
     pass
 
 
 class RegisterValidateSerializer(UserBaseSerializer):
+    # Expose phone_number to Swagger as optional for registration, but present in schema
+    phone_number = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
     def validate_email(self, email):
-        try:
-            CustomUser.objects.get(email=email)
-        except:
-            return email
-        raise ValidationError('User уже существует!')
+        # The Pythonic Way: .exists() generates a lightning-fast SQL EXISTS query
+        # without loading a heavy model instance into memory.
+        if User.objects.filter(email=email).exists():
+            raise ValidationError('Пользователь с таким email уже существует!')
+        return email
 
 
 class ConfirmationSerializer(serializers.Serializer):
@@ -31,8 +43,8 @@ class ConfirmationSerializer(serializers.Serializer):
         code = attrs.get('code')
 
         try:
-            user = CustomUser.objects.get(id=user_id)
-        except CustomUser.DoesNotExist:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
             raise ValidationError('User не существует!')
 
         try:
