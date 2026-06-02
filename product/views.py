@@ -1,11 +1,12 @@
 from collections import OrderedDict
-from django.db import transaction
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
+
+from common import RestrictStaffProductManagement, EditWithinFifteenMinutes, IsModerator
 
 from .models import Category, Product, Review
 from .serializers import (
@@ -19,7 +20,6 @@ from .serializers import (
 )
 
 PAGE_SIZE = 5
-
 
 class CustomPagination(PageNumberPagination):
     def get_paginated_response(self, data):
@@ -39,72 +39,44 @@ class CategoryListCreateAPIView(ListCreateAPIView):
     serializer_class = CategorySerializer
     pagination_class = CustomPagination
 
-    def post(self, request, *args, **kwargs):
-        serializer = CategoryValidateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        category = Category.objects.create(**serializer.validated_data)
-        return Response(data=CategorySerializer(category).data,
-                        status=status.HTTP_201_CREATED)
-
 
 class CategoryDetailAPIView(RetrieveUpdateDestroyAPIView):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
     lookup_field = 'id'
 
-    def put(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = CategoryValidateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        instance.name = serializer.validated_data.get('name')
-        instance.save()
-
-        return Response(data=CategorySerializer(instance).data)
-
 
 class ProductListCreateAPIView(ListCreateAPIView):
     queryset = Product.objects.select_related('category').all()
     serializer_class = ProductSerializer
     pagination_class = CustomPagination
+    # FIX: Stop staff members from executing POST requests here!
+    permission_classes = [RestrictStaffProductManagement]
 
     def post(self, request, *args, **kwargs):
         serializer = ProductValidateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
-        # Get validated data
-        title = serializer.validated_data.get('title')
-        description = serializer.validated_data.get('description')
-        price = serializer.validated_data.get('price')
-        category = serializer.validated_data.get('category')
-
-        # Create product
-        product = Product.objects.create(
-            title=title,
-            description=description,
-            price=price,
-            category=category
-        )
-
-        return Response(data=ProductSerializer(product).data,
-                        status=status.HTTP_201_CREATED)
+        
+        # Let the serializer handle validation and instantiation
+        product = Product.objects.create(**serializer.validated_data)
+        return Response(data=ProductSerializer(product).data, status=status.HTTP_201_CREATED)
 
 
 class ProductDetailAPIView(RetrieveUpdateDestroyAPIView):
     queryset = Product.objects.select_related('category').all()
     serializer_class = ProductSerializer
     lookup_field = 'id'
+    # Protected globally and at the object level
+    permission_classes = [RestrictStaffProductManagement & (EditWithinFifteenMinutes | IsModerator)]
 
     def put(self, request, *args, **kwargs):
-        product = self.get_object()
+        product = self.get_object() # 💡 This line automatically fires 'has_object_permission'!
         serializer = ProductValidateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        product.title = serializer.validated_data.get('title')
-        product.description = serializer.validated_data.get('description')
-        product.price = serializer.validated_data.get('price')
-        product.category = serializer.validated_data.get('category')
+        # Pythonic update loop dynamically assigning validated data
+        for attr, value in serializer.validated_data.items():
+            setattr(product, attr, value)
         product.save()
 
         return Response(data=ProductSerializer(product).data)
@@ -115,37 +87,6 @@ class ReviewViewSet(ModelViewSet):
     serializer_class = ReviewSerializer
     pagination_class = CustomPagination
     lookup_field = 'id'
-
-    def create(self, request, *args, **kwargs):
-        serializer = ReviewValidateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        # Get validated data
-        text = serializer.validated_data.get('text')
-        stars = serializer.validated_data.get('stars')
-        product = serializer.validated_data.get('product')
-
-        # Create review
-        review = Review.objects.create(
-            text=text,
-            stars=stars,
-            product=product
-        )
-
-        return Response(data=ReviewSerializer(review).data,
-                        status=status.HTTP_201_CREATED)
-
-    def update(self, request, *args, **kwargs):
-        review = self.get_object()
-        serializer = ReviewValidateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        review.text = serializer.validated_data.get('text')
-        review.stars = serializer.validated_data.get('stars')
-        review.product = serializer.validated_data.get('product')
-        review.save()
-
-        return Response(data=ReviewSerializer(review).data)
 
 
 class ProductWithReviewsAPIView(APIView):
