@@ -1,6 +1,8 @@
 from datetime import timedelta
 from django.utils import timezone
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from common.validators import validate_product_creation_age
+
 
 class RestrictStaffProductManagement(BasePermission):
     """
@@ -18,6 +20,22 @@ class RestrictStaffProductManagement(BasePermission):
             return False
             
         return request.user.is_authenticated
+    
+    
+class CanCreateProductByAge(BasePermission):
+    """
+    Protects product creation by parsing and validating the user's age from the token.
+    """
+    def has_permission(self, request, view):
+        # We only care about blocking creation attempts
+        if request.method == 'POST':
+            # SimpleJWT exposes the decoded payload keys inside request.auth
+            birthdate_str = request.auth.get('birthdate') if request.auth else None
+            
+            # Execute our architectural validator logic
+            validate_product_creation_age(birthdate_str)
+            
+        return True
 
 
 class EditWithinFifteenMinutes(BasePermission):

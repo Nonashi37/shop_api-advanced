@@ -4,6 +4,7 @@ from django.core.validators import RegexValidator
 from django.utils import timezone
 from users.managers import CustomUserManager
 
+
 class CustomUser(AbstractBaseUser, PermissionsMixin):
     # Regex validator for standart international phone formants (like: +123456780)
     phone_regex = RegexValidator(
@@ -13,6 +14,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True, max_length=255) # at any rate
     # Blank and null are True so regular users aren't forced to procide it on registration
     phone_number = models.CharField(validators=[phone_regex], max_length=17, blank=True, null=True)
+    birthdate = models.DateField(blank=True, null=True)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)

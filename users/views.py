@@ -6,6 +6,8 @@ from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .serializers import CustomTokenObtainPairSerializer
 
 from .serializers import (
     RegisterValidateSerializer,
@@ -13,6 +15,9 @@ from .serializers import (
     ConfirmationSerializer
 )
 from .models import ConfirmationCode
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
 
 # Look up the custom user model dynamically
 User = get_user_model()

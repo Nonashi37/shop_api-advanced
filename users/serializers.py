@@ -2,6 +2,18 @@ from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from .models import ConfirmationCode
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        # Get the standart token payload blueprint
+        token = super().get_token(user)
+
+        # Inject our custom claim straight inito the signed token payload
+        token['birthdate'] = str(user.birthdate) if user.birthdate else None
+
+        return token
 
 
 # This prevents circular import hell in Django.

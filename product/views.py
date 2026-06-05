@@ -6,7 +6,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 
-from common import RestrictStaffProductManagement, EditWithinFifteenMinutes, IsModerator
+from common import RestrictStaffProductManagement, EditWithinFifteenMinutes, IsModerator, CanCreateProductByAge
 
 from .models import Category, Product, Review
 from .serializers import (
@@ -51,7 +51,7 @@ class ProductListCreateAPIView(ListCreateAPIView):
     serializer_class = ProductSerializer
     pagination_class = CustomPagination
     # FIX: Stop staff members from executing POST requests here!
-    permission_classes = [RestrictStaffProductManagement]
+    permission_classes = [RestrictStaffProductManagement, CanCreateProductByAge]
 
     def post(self, request, *args, **kwargs):
         serializer = ProductValidateSerializer(data=request.data)

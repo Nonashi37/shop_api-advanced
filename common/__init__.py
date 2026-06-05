@@ -1,1 +1,1 @@
-from .permissions import RestrictStaffProductManagement, EditWithinFifteenMinutes, IsModerator
+from .permissions import RestrictStaffProductManagement, EditWithinFifteenMinutes, IsModerator, CanCreateProductByAge
