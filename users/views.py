@@ -9,6 +9,14 @@ from rest_framework.authtoken.models import Token
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import CustomTokenObtainPairSerializer
 
+
+from django.utils import timezone
+from rest_framework.views import APIView
+from rest_framework import status, serializers
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from .oauth import exchange_code_for_google_user
+
 from .serializers import (
     RegisterValidateSerializer,
     AuthValidateSerializer,
@@ -21,6 +29,70 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 # Look up the custom user model dynamically
 User = get_user_model()
+
+class GoogleLoginSerializer(serializers.Serializer):
+    code = serializers.CharField(required=True, help_text="The authorization code returned from Google.")
+    redirect_uri = serializers.CharField(required=True, help_text="Must perfectly match the redirect URI sent to Google.")
+
+class GoogleLoginAPIView(APIView):
+    """
+    Handles incoming Google OAuth codes, provisions users, and issues application JWTs.
+    """
+    # Public route, no auth headers needed to hit this!
+    permission_classes = [] 
+
+    def post(self, request, *args, **kwargs):
+        serializer = GoogleLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        code = serializer.validated_data['code']
+        redirect_uri = serializer.validated_data['redirect_uri']
+        
+        # Run the HTTP handshake
+        google_profile = exchange_code_for_google_user(code=code, redirect_uri=redirect_uri)
+        
+        email = google_profile.get('email')
+        given_name = google_profile.get('given_name', '')
+        family_name = google_profile.get('family_name', '')
+        
+        if not email:
+            return Response({"error": "Google profile did not supply an email address."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Database Provisioning Phase (Get or Create)
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                'first_name': given_name,
+                'last_name': family_name,
+                'registration_source': 'google',
+                'is_active': True, # Rule 1: Make user active explicitly on signup
+            }
+        )
+        
+        # Ensure rules apply to existing users returning via Google
+        if not user.is_active:
+            user.is_active = True
+            
+        # Rule 2: Save the date and time of the last login
+        user.last_login = timezone.now()
+        user.save()
+        
+        # Generate standard SimpleJWT tokens for our app architecture
+        refresh = RefreshToken.for_user(user)
+        
+        # Custom claim injection manually since we are outside the standard TokenObtainPairView
+        refresh['birthdate'] = str(user.birthdate) if user.birthdate else None
+        
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "registration_source": user.registration_source
+            }
+        }, status=status.HTTP_200_OK)
 
 
 class AuthorizationAPIView(GenericAPIView):

@@ -6,6 +6,11 @@ from users.managers import CustomUserManager
 
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
+    REGISTRATION_SOURCES = [
+        ('local', 'Local Account'),
+        ('google', 'Google Oatuth'),
+        ('facebook', 'Facebook OAuth'),
+    ]
     # Regex validator for standart international phone formants (like: +123456780)
     phone_regex = RegexValidator(
         regex=r'^\+?1?\d{9,15}$',
@@ -15,6 +20,14 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     # Blank and null are True so regular users aren't forced to procide it on registration
     phone_number = models.CharField(validators=[phone_regex], max_length=17, blank=True, null=True)
     birthdate = models.DateField(blank=True, null=True)
+
+    first_name = models.CharField(max_length=150, blank=True)
+    last_name = models.CharField(max_length=150, blank=True)
+    registration_source = models.CharField(
+        max_length=20,
+        choices=REGISTRATION_SOURCES,
+        default='local'
+    )
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)

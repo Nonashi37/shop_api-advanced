@@ -6,4 +6,5 @@ urlpatterns = [
     path('registration/', RegistrationAPIView.as_view()),
     path('authorization/', AuthorizationAPIView.as_view()),
     path('confirm/', ConfirmUserAPIView.as_view())
+    path('login/google', GoogleLoginAPIView.as_view(), name='google_oauth_login'),
 ]
