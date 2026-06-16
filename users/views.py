@@ -2,97 +2,28 @@ import random
 import string
 from django.db import transaction
 from django.contrib.auth import authenticate, get_user_model
+from django.utils import timezone
 from rest_framework.generics import GenericAPIView
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import CustomTokenObtainPairSerializer
-
-
-from django.utils import timezone
-from rest_framework.views import APIView
-from rest_framework import status, serializers
-from rest_framework_simplejwt.tokens import RefreshToken
-
-from .oauth import exchange_code_for_google_user
 
 from .serializers import (
+    CustomTokenObtainPairSerializer,
     RegisterValidateSerializer,
     AuthValidateSerializer,
     ConfirmationSerializer
 )
 from .models import ConfirmationCode
 
-class CustomTokenObtainPairView(TokenObtainPairView):
-    serializer_class = CustomTokenObtainPairSerializer
-
 # Look up the custom user model dynamically
 User = get_user_model()
 
-class GoogleLoginSerializer(serializers.Serializer):
-    code = serializers.CharField(required=True, help_text="The authorization code returned from Google.")
-    redirect_uri = serializers.CharField(required=True, help_text="Must perfectly match the redirect URI sent to Google.")
 
-class GoogleLoginAPIView(APIView):
-    """
-    Handles incoming Google OAuth codes, provisions users, and issues application JWTs.
-    """
-    # Public route, no auth headers needed to hit this!
-    permission_classes = [] 
-
-    def post(self, request, *args, **kwargs):
-        serializer = GoogleLoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        code = serializer.validated_data['code']
-        redirect_uri = serializer.validated_data['redirect_uri']
-        
-        # Run the HTTP handshake
-        google_profile = exchange_code_for_google_user(code=code, redirect_uri=redirect_uri)
-        
-        email = google_profile.get('email')
-        given_name = google_profile.get('given_name', '')
-        family_name = google_profile.get('family_name', '')
-        
-        if not email:
-            return Response({"error": "Google profile did not supply an email address."}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Database Provisioning Phase (Get or Create)
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                'first_name': given_name,
-                'last_name': family_name,
-                'registration_source': 'google',
-                'is_active': True, # Rule 1: Make user active explicitly on signup
-            }
-        )
-        
-        # Ensure rules apply to existing users returning via Google
-        if not user.is_active:
-            user.is_active = True
-            
-        # Rule 2: Save the date and time of the last login
-        user.last_login = timezone.now()
-        user.save()
-        
-        # Generate standard SimpleJWT tokens for our app architecture
-        refresh = RefreshToken.for_user(user)
-        
-        # Custom claim injection manually since we are outside the standard TokenObtainPairView
-        refresh['birthdate'] = str(user.birthdate) if user.birthdate else None
-        
-        return Response({
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-            "user": {
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "registration_source": user.registration_source
-            }
-        }, status=status.HTTP_200_OK)
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
 
 
 class AuthorizationAPIView(GenericAPIView):
@@ -116,6 +47,10 @@ class AuthorizationAPIView(GenericAPIView):
                     data={'error': 'User account is not activated yet!'}
                 )
 
+            # Record login timestamp
+            user.last_login = timezone.now()
+            user.save(update_fields=['last_login'])
+
             token, _ = Token.objects.get_or_create(user=user)
             return Response(data={'key': token.key})
 
@@ -132,13 +67,25 @@ class RegistrationAPIView(GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        validated_data = serializer.validated_data
+        email = validated_data.get('email')
+        password = validated_data.get('password')
+        phone_number = validated_data.get('phone_number')
+        birthdate = validated_data.get('birthdate')
+        first_name = validated_data.get('first_name', '')
+        last_name = validated_data.get('last_name', '')
+
         # Use transaction to ensure data consistency
         with transaction.atomic():
-            # Unpack validated_data so phone_number, email, 
-            # and password are all passed and saved automatically!
+            # Create user explicitly using the manager method
             user = User.objects.create_user(
-                **serializer.validated_data,
-                is_active=False
+                email=email,
+                password=password,
+                phone_number=phone_number,
+                birthdate=birthdate,
+                first_name=first_name,
+                last_name=last_name,
+                is_active=False  # Must be activated via OTP code
             )
 
             # Create a random 6-digit verification code
@@ -165,9 +112,17 @@ class ConfirmUserAPIView(GenericAPIView):
 
         with transaction.atomic():
             # Fetch user safely using the dynamic User reference
-            user = User.objects.get(id=user_id)
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response(
+                    status=status.HTTP_444_NOT_FOUND,
+                    data={'error': 'User not found!'}
+                )
+
             user.is_active = True
-            user.save()
+            user.last_login = timezone.now()
+            user.save(update_fields=['is_active', 'last_login'])
 
             token, _ = Token.objects.get_or_create(user=user)
             

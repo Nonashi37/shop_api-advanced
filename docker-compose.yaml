@@ -1,13 +1,20 @@
-version: '3'
+version: '3.8'
+
 services:
   shop_api:
     build:
       context: .
-    command: sh -c "python manage.py runserver 0.0.0.0:8000"
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
     ports:
       - "7001:8000"
     depends_on:
       - shop_api_db
+      - redis
+    volumes:
+      - .:/app
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+
   shop_api_db:
     image: "postgres:14"
     environment:
@@ -16,5 +23,43 @@ services:
       - POSTGRES_PASSWORD=12345
     volumes:
       - 'shop_api-data:/var/lib/postgresql/data'
+
+  # The Message Broker and Cache Engine
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"
+
+  #  The Background Task Consumer
+  celery_worker:
+    build:
+      context: .
+    command: celery -A shop_api worker --loglevel=info
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - shop_api_db
+
+  #  The Scheduler (Cron Daemon)
+  celery_beat:
+    build:
+      context: .
+    command: celery -A shop_api beat --loglevel=info
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+
+  #  Real-Time Web Dashboard for Tasks
+  flower:
+    build:
+      context: .
+    command: celery -A shop_api flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+
 volumes:
   shop_api-data:
